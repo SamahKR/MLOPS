@@ -27,85 +27,129 @@ Avant de commencer, assurez-vous d'avoir :
 ---
 
 ## 🚀 Guide d'Installation Étape par Étape
+## Guide d'Installation Étape par Étape
 
 ### 1. Cloner le projet
+
 ```bash
 git clone https://github.com/SamahKR/MLOPS.git
-cd MLOPS 
+cd MLOPS
+```
 
-### 2.Construire les images Docker
+### 2. Construire les images Docker
 
+```bash
 docker build -t real-time-fraud-detection-api:latest -f dockerfiles/Dockerfile.api .
 docker build -t real-time-fraud-detection-producer:latest -f dockerfiles/Dockerfile.producer .
 docker build -t real-time-fraud-detection-consumer:latest -f dockerfiles/Dockerfile.consumer .
+```
 
-(Note : Docker Desktop partage automatiquement ces images avec Kubernetes, pas besoin de minikube image load).
+**Note :** Docker Desktop partage automatiquement ces images avec Kubernetes, pas besoin de `minikube image load`.
 
 ### 3. Déployer sur Kubernetes
 
+```bash
 kubectl apply -f k8s-deployment.yaml
+```
 
-Attendez que tous les pods soient en statut Running :
+Attendez que tous les pods soient en statut `Running` :
+
+```bash
 kubectl get pods
+```
 
 ### 4. Initialiser Feast (Feature Store)
+
 Générez les données historiques et synchronisez-les vers Redis :
+
 **1. Générer les données Parquet**
+
+```bash
 python generate_data.py
+```
 
 **2. Enregistrer les features**
+
+```bash
 cd feature_repo
 feast apply
 cd ..
+```
 
 **3. Exposer Redis et matérialiser**
+
+```bash
 kubectl port-forward svc/redis 6379:6379
+```
+
 (Dans un nouveau terminal) :
-# Windows PowerShell
+
+**Windows PowerShell**
+
+```powershell
 $env:REDIS_HOST="localhost"; feast materialize 2026-01-01T00:00:00 2026-12-31T00:00:00
+```
+
 ### 5. Entraîner le modèle avec MLflow
-Exposez MLflow :   
-kubectl port-forward svc/mlflow 5000:5000 
-(Dans un nouveau terminal) : 
-# Windows PowerShell
-$env:MLFLOW_TRACKING_URI="http://localhost:5000"; python app/train.py 
+
+Exposez MLflow :
+
+```bash
+kubectl port-forward svc/mlflow 5000:5000
+```
+
+(Dans un nouveau terminal) :
+
+**Windows PowerShell**
+
+```powershell
+$env:MLFLOW_TRACKING_URI="http://localhost:5000"; python app/train.py
+```
+
 Après l'entraînement, redémarrez le consumer pour qu'il charge le modèle :
+
+```bash
 kubectl rollout restart deployment consumer
+```
+
 ### 6. Observer les résultats 🎉
+
 Lancez l'affichage des logs du consumer :
+
+```bash
 kubectl logs deployment/consumer -f
-------------
-### 🛠️ Corrections et Améliorations Apportées (Troubleshooting):
+```
+
+---
+
+### 🛠️ Corrections et Améliorations Apportées (Troubleshooting)
+
 Lors du déploiement, plusieurs défis techniques ont été résolus pour garantir la stabilité du système :
 
-Sécurité MLflow (Invalid Host header) :
+**1. Sécurité MLflow (Invalid Host header)**
 
-Problème : MLflow bloquait les requêtes venant d'autres pods Kubernetes.
+- **Problème :** MLflow bloquait les requêtes venant d'autres pods Kubernetes.
+- **Solution :** Ajout de l'argument `--allowed-hosts "*"` dans la commande de démarrage de MLflow dans `k8s-deployment.yaml`.
 
-Solution : Ajout de l'argument --allowed-hosts "*" dans la commande de démarrage de MLflow dans k8s-deployment.yaml.
+**2. Sérialisation Scikit-learn (skops_trusted_types)**
 
-Sérialisation Scikit-learn (skops_trusted_types) :
+- **Problème :** MLflow refusait d'enregistrer le modèle RandomForest par sécurité.
+- **Solution :** Ajout du paramètre `skops_trusted_types=["sklearn.tree._tree.Tree"]` dans l'appel `mlflow.sklearn.log_model` du fichier `app/train.py`.
 
-Problème : MLflow refusait d'enregistrer le modèle RandomForest par sécurité.
+**3. Simulation de Fraude Autonome**
 
-Solution : Ajout du paramètre skops_trusted_types=["sklearn.tree._tree.Tree"] dans l'appel mlflow.sklearn.log_model du fichier app/train.py.
+- **Problème :** Le simulateur ne générait que des transactions normales.
+- **Solution :** Modification de la fonction `generate_transaction` dans `app/main.py` pour injecter une transaction de 15000$ avec 20% de probabilité, permettant de tester la détection sans passer par Swagger.
 
-Simulation de Fraude Autonome :
+---
 
-Problème : Le simulateur ne générait que des transactions normales.
-
-Solution : Modification de la fonction generate_transaction dans app/main.py pour injecter une transaction de 15000$ avec 20% de probabilité, permettant de tester la détection sans passer par Swagger.
------------------
 ### 🧰 Stack Technique
-**Kubernetes (Docker Desktop)** : Orchestration
 
-**Apache Kafka** : Streaming d'événements
+- **Kubernetes (Docker Desktop)** : Orchestration
+- **Apache Kafka** : Streaming d'événements
+- **MLflow** : Model Registry & Tracking
+- **Feast & Redis** : Feature Store (Online/Offline)
+- **FastAPI** : API & Simulateur
+- **Scikit-learn** : Machine Learning (RandomForest)
 
-**MLflow** : Model Registry & Tracking
-
-**Feast & Redis** : Feature Store (Online/Offline)
-
-**FastAPI** : API & Simulateur
-
-**Scikit-learn** : Machine Learning (RandomForest)
---------------------------
+---
